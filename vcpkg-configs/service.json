@@ -1,0 +1,23 @@
+{
+  "requires": [
+    "common"
+  ],
+  "dependencies": [
+    {
+      "name": "sqlite3",
+      "version": "3.50.0",
+      "features": ["static", "tool"]
+    },
+    {
+      "name": "boost-uuid",
+      "version": "1.88.0",
+      "features": ["static"]
+    }
+  ],
+  "features": {
+    "service": [
+      "sqlite3",
+      "boost-uuid"
+    ]
+  }
+}

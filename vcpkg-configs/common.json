@@ -1,0 +1,30 @@
+{
+  "default-registry": {
+    "kind": "git",
+    "repository": "https://github.com/microsoft/vcpkg",
+    "baseline": "120deac3062162151622ca4860575a33844ba10b"
+  },
+  "registries": [
+    {
+      "kind": "artifact",
+      "location": "https://github.com/microsoft/vcpkg-ecosystem/archive/refs/heads/main.zip",
+      "name": "microsoft"
+    }
+  ],
+  "dependencies": [
+    {
+      "name": "grpc",
+      "version": "1.71.0",
+      "features": ["protobuf", "static"]
+    },
+    {
+      "name": "protobuf",
+      "features": ["static"]
+    },
+    {
+        "name": "openssl",
+        "version>=": "3.5.0",
+        "features": ["static"]
+    }
+  ]
+}

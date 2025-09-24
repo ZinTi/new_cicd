@@ -1,0 +1,239 @@
+# .github/workflows/ci.yml
+
+# 参考 https://github.com/actions/starter-workflows/blob/main/ci/cmake-multi-platform.yml
+
+# Release Package Naming Format：
+#     <name>-<component>-v<semantic version>-<date build number>.<daily iteration number>-<platform>-<architecture>-<toolchain>.<extension>
+#  
+# Examples:
+#     hello-server-v1.0.0-20250924.1-linux-x86_x64-gcc.tar.xz
+#     hello-client-v1.0.0-20250924.2-windows-x86_x64-mingw.7z
+# 
+
+name:  CMake on multiple platforms
+on:
+  push:
+    branches: [ main, master ]
+    #branches: [ $default-branch ]
+  pull_request:
+    branches: [ main, master ]
+    #branches: [ $default-branch ]
+
+jobs:
+  build-and-package:
+    runs-on: ${{ matrix.os }} # 指定运行环境，使用矩阵变量os
+    strategy: # 定义构建策略
+      fail-fast: false # 设置fail-fast为false，即使矩阵中一个任务失败，其他任务也会继续执行
+      matrix:  # 定义矩阵策略，用于创建多个构建配置组合
+        os: [ubuntu-latest, windows-latest]
+        build_type: [Release]
+        c_compiler: [gcc, clang, cl]
+        include: # 包含特定组合的列表（精确控制矩阵）
+          # Windows + MSVC
+          - os: windows-latest
+            triplet: x64-windows-static
+            c_compiler: cl
+            cpp_compiler: cl
+            generator: "Visual Studio 17 2022"
+            arch: "x64"
+          # Windows + MinGW
+          - os: windows-latest
+            triplet: x64-mingw-static
+            c_compiler: gcc
+            cpp_compiler: g++
+            generator: "MinGW Makefiles"
+          # Linux + GCC
+          - os: ubuntu-latest
+            triplet: x64-linux
+            c_compiler: gcc
+            cpp_compiler: g++
+            generator: "Unix Makefiles"
+          # Linux + Clang
+          - os: ubuntu-latest
+            triplet: x64-linux
+            c_compiler: clang
+            cpp_compiler: clang++
+            generator: "Unix Makefiles"
+        exclude: # 排除不需要的组合
+          # 排除 Windows + Clang
+          - os: windows-latest
+            c_compiler: clang
+          # 排除 Ubuntu + MSVC
+          - os: ubuntu-latest
+            c_compiler: cl
+    
+    # timeout-minutes: 30
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4 # 使用actions/checkout动作检出代码库
+
+      # 设置可重用的字符串（如统一的以 / 为目录分隔符的工作目录、构建输出目录、Release 目录）
+      - name: Set reusable strings
+        id: strings     # 步骤ID，用于后续引用
+        shell: bash     # GitHub Actions 的 Windows 环境预装了 Git Bash
+        run: |          # 运行命令：将多个路径设置为环境变量
+          workspace_dir="${{ github.workspace }}"       # 从GitHub上下文获取路径并标准化
+          workspace_dir="${workspace_dir//\\//}"        # 替换所有反斜杠为正斜杠
+          workspace_dir="${workspace_dir%/}"            # 移除路径末尾的斜杠（如果存在）
+          
+          # 构建路径并写入输出变量
+          echo "workspace-dir=$workspace_dir" >> "$GITHUB_OUTPUT"
+          echo "build-output-dir=$workspace_dir/build" >> "$GITHUB_OUTPUT"
+          echo "release-dir=$workspace_dir/release" >> "$GITHUB_OUTPUT"
+
+          echo "vcpkg-triplet=${{ matrix.triplet }}" >> "$GITHUB_OUTPUT"
+          echo "cmake-generator=${{ matrix.generator }}" >> "$GITHUB_OUTPUT"
+
+#       - name: Print compilers
+#         shell: bash
+#         run: |
+#           echo "C Compiler: ${{ matrix.c_compiler }}"
+#           echo "C++ Compiler: ${{ matrix.cpp_compiler }}"
+#           which ${{ matrix.c_compiler }} && ${{ matrix.c_compiler }} --version || echo "${{ matrix.c_compiler }} not found"
+#           which ${{ matrix.cpp_compiler }} && ${{ matrix.cpp_compiler }} --version || echo "${{ matrix.cpp_compiler }} not found"
+
+      # 缓存 vcpkg 二进制
+      - name: Cache vcpkg dependencies
+        uses: actions/cache@v3
+        with:
+          path: vcpkg/installed
+          key: ${{ runner.os }}-${{ matrix.c_compiler }}-vcpkg-${{ matrix.triplet }}-${{ hashFiles('vcpkg.json', 'vcpkg-configs/*.json') }}
+
+      # 配置 vcpkg 覆盖
+      - name: Configure vcpkg overlays
+        run: |
+          mkdir vcpkg-overlays
+          cp vcpkg-configs/common.json vcpkg-overlays/
+          cp vcpkg-configs/client_desktop.json vcpkg-overlays/
+          cp vcpkg-configs/control.json vcpkg-overlays/
+          cp vcpkg-configs/service.json vcpkg-overlays/
+          echo "vcpkg_overlay_ports=$(pwd)/vcpkg-overlays" >> $GITHUB_OUTPUT
+          
+      # 安装全局依赖
+      - name: Install common dependencies
+        run: |
+          vcpkg --version || echo "vcpkg not found"
+          vcpkg install --triplet ${{ steps.strings.outputs.vcpkg-triplet }} --overlay-ports=./vcpkg-overlays
+
+
+      - name: Configure CMake
+        shell: bash
+        run: |
+          # 对于 Visual Studio 额外指定架构，且不在生成阶段指定 -DCMAKE_BUILD_TYPE ，而是在 Build 阶段指定 --config 参数
+          if [[ "${{ matrix.generator }}" == "Visual Studio"* ]]; then
+            cmake -B ${{ steps.strings.outputs.build-output-dir }} \
+            -G "${{ matrix.generator }}" -A ${{ matrix.arch }} \
+            -DCMAKE_CXX_COMPILER=${{ matrix.cpp_compiler }} \
+            -DCMAKE_C_COMPILER=${{ matrix.c_compiler }} \
+            -S ${{ steps.strings.outputs.workspace-dir }} \
+            -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake \
+            -DVCPKG_TARGET_TRIPLET=${{ steps.strings.outputs.vcpkg-triplet }}
+
+          else
+            cmake -B ${{ steps.strings.outputs.build-output-dir }} \
+            -G "${{ matrix.generator }}" \
+            -DCMAKE_CXX_COMPILER=${{ matrix.cpp_compiler }} \
+            -DCMAKE_C_COMPILER=${{ matrix.c_compiler }} \
+            -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
+            -S ${{ steps.strings.outputs.workspace-dir }} \
+            -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake \
+            -DVCPKG_TARGET_TRIPLET=${{ steps.strings.outputs.vcpkg-triplet }}
+          fi
+
+      - name: Build
+        shell: bash
+        run: |
+          # Visual Studio 需要 --config 参数，MinGW 和 Unix Makefiles 不需要 --config
+          if [[ "${{ matrix.generator }}" == "Visual Studio"* ]]; then
+            cmake --build ${{ steps.strings.outputs.build-output-dir }} --config ${{ matrix.build_type }} --parallel
+          else
+            cmake --build ${{ steps.strings.outputs.build-output-dir }} --parallel
+          fi
+
+      - name: Tests
+        # 设置工作目录为构建输出目录
+        working-directory: ${{ steps.strings.outputs.build-output-dir }}
+        shell: bash
+        # 运行ctest测试，--build-config用于多配置生成器（如Visual Studio）
+        run: ctest --build-config ${{ matrix.build_type }} --output-on-failure
+
+      - name: Set version
+        id: setver
+        shell: bash
+        run: |
+
+          # 从项目根目录的 CMakeLists.txt 获取版本号
+          version=$(grep -m1 'project(.* VERSION' ${{ steps.strings.outputs.workspace-dir }}/CMakeLists.txt | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
+          # 使用语义化版本+日期+构建号
+          DATE=$(date +'%Y%m%d')
+          echo "version=${version:-0.0.1}-$DATE.${{ github.run_number }}" >> $GITHUB_OUTPUT
+          echo "short_os=$(echo $RUNNER_OS | tr '[:upper:]' '[:lower:]')" >> $GITHUB_OUTPUT
+          echo "arch=x86_64" >> $GITHUB_OUTPUT
+          
+          # 检测工具链
+          if [ "$RUNNER_OS" == "Linux" ]; then
+            # Linux 下根据矩阵变量判断工具链
+            if [ "${{ matrix.c_compiler }}" == "clang" ]; then
+              echo "toolchain=clang" >> $GITHUB_OUTPUT
+            else
+              echo "toolchain=gcc" >> $GITHUB_OUTPUT
+            fi
+          elif [ "$RUNNER_OS" == "Windows" ]; then
+            # Windows 下根据矩阵变量判断工具链
+            if [ "${{ matrix.c_compiler }}" == "cl" ]; then
+              echo "toolchain=msvc" >> $GITHUB_OUTPUT
+            else
+              echo "toolchain=mingw" >> $GITHUB_OUTPUT
+            fi
+          fi
+
+      - name: Prepare release files
+        shell: bash
+        run: |
+
+          # 创建组件目录
+          mkdir -p ${{ steps.strings.outputs.release-dir }}/client/bin
+          mkdir -p ${{ steps.strings.outputs.release-dir }}/server/{bin,data}
+
+          # 复制可执行文件到对应组件
+          if [ "${{ matrix.c_compiler }}" == "cl" ]; then
+            cp ${{ steps.strings.outputs.build-output-dir }}/client_desktop/Release/hello.exe ${{ steps.strings.outputs.release-dir }}/client/bin/
+            cp ${{ steps.strings.outputs.build-output-dir }}/service/Release/hellod.exe ${{ steps.strings.outputs.release-dir }}/server/bin/
+            cp ${{ steps.strings.outputs.build-output-dir }}/control/Release/helloctl.exe ${{ steps.strings.outputs.release-dir }}/server/bin/
+          else
+            cp ${{ steps.strings.outputs.build-output-dir }}/client_desktop/hello ${{ steps.strings.outputs.release-dir }}/client/bin/
+            cp ${{ steps.strings.outputs.build-output-dir }}/service/hellod ${{ steps.strings.outputs.release-dir }}/server/bin/
+            cp ${{ steps.strings.outputs.build-output-dir }}/control/helloctl ${{ steps.strings.outputs.release-dir }}/server/bin/
+          fi
+
+          # 复制资源文件
+          # cp -r assets ${{ steps.strings.outputs.release-dir }}/client/
+          # cp -r assets ${{ steps.strings.outputs.release-dir }}/server/
+
+      - name: Create release archives
+        shell: bash
+        run: |
+          cd ${{ steps.strings.outputs.release-dir }}
+          
+          # 客户端打包
+          if [ "$RUNNER_OS" == "Linux" ]; then
+            tar -Jcvf hello-client-v${{ steps.setver.outputs.version }}-${{ steps.setver.outputs.short_os }}-${{ steps.setver.outputs.arch }}-${{ steps.setver.outputs.toolchain }}.tar.xz -C client .
+          elif [ "$RUNNER_OS" == "Windows" ]; then
+            7z a hello-client-v${{ steps.setver.outputs.version }}-${{ steps.setver.outputs.short_os }}-${{ steps.setver.outputs.arch }}-${{ steps.setver.outputs.toolchain }}.7z client/*
+          fi
+          
+          # 服务端打包
+          if [ "$RUNNER_OS" == "Linux" ]; then
+            tar -Jcvf hello-server-v${{ steps.setver.outputs.version }}-${{ steps.setver.outputs.short_os }}-${{ steps.setver.outputs.arch }}-${{ steps.setver.outputs.toolchain }}.tar.xz -C server .
+          elif [ "$RUNNER_OS" == "Windows" ]; then
+            7z a hello-server-v${{ steps.setver.outputs.version }}-${{ steps.setver.outputs.short_os }}-${{ steps.setver.outputs.arch }}-${{ steps.setver.outputs.toolchain }}.7z server/*
+          fi
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-pkgs-${{ matrix.os }}-${{ matrix.c_compiler }}-${{ steps.setver.outputs.version }}
+          path: |
+            ${{ steps.strings.outputs.release-dir }}/*.tar.xz
+            ${{ steps.strings.outputs.release-dir }}/*.7z

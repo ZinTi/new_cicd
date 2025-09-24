@@ -1,0 +1,17 @@
+{
+  "requires": [
+    "common"
+  ],
+  "dependencies": [
+    {
+      "name": "qtbase",
+      "version": "6.10.0",
+      "features": ["static"]
+    }
+  ],
+  "features": {
+    "client_desktop": [
+      "qtbase"
+    ]
+  }
+}

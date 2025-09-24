@@ -1,0 +1,27 @@
+{
+  "name": "multi-project-static",
+  "version": "1.0.0",
+  "builtin-baseline": "120deac3062162151622ca4860575a33844ba10b",
+  "dependencies": [
+    {
+      "name": "openssl",
+      "version>=": "3.5.0",
+      "features": ["static"]
+    },
+    {
+      "name": "grpc",
+      "version": "1.71.0",
+      "features": ["protobuf", "static"]
+    },
+    {
+      "name": "protobuf",
+      "features": ["static"]
+    }
+  ],
+  "requires": [
+    "service",
+    "control",
+    "client_desktop"
+  ]
+  
+}
