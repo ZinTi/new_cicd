@@ -1,0 +1,143 @@
+# .github/workflows/ci.yml
+
+# 参考 https://github.com/actions/starter-workflows/blob/main/ci/cmake-multi-platform.yml
+
+# Release Package Naming Format：
+#     <name>-<component>-v<semantic version>-<date build number>.<daily iteration number>-<platform>-<architecture>-<toolchain>.<extension>
+#  
+# Examples:
+#     hello-server-v1.0.0-20250924.1-linux-x86_x64-gcc.tar.xz
+#     hello-client-v1.0.0-20250924.2-windows-x86_x64-mingw.7z
+# 
+
+name:  CMake on multiple platforms
+on:
+  push:
+    branches: [ $default-branch ]
+  pull_request:
+    branches: [ $default-branch ]
+
+jobs:
+  build-and-package:
+    runs-on: ${{ matrix.os }} # 指定运行环境，使用矩阵变量os
+    strategy: # 定义构建策略
+      fail-fast: false # 设置fail-fast为false，即使矩阵中一个任务失败，其他任务也会继续执行
+      matrix:  # 定义矩阵策略，用于创建多个构建配置组合
+        os: [ubuntu-latest, windows-latest]
+        build_type: [Release]
+        c_compiler: [gcc, clang, cl]
+        # 包含特定组合的列表（用于精确控制矩阵）
+        include:
+          # 当os为windows-latest时，使用cl作为C编译器，cpp_compiler为cl
+          - os: windows-latest
+            c_compiler: cl
+            cpp_compiler: cl
+          # 当os为ubuntu-latest时，使用gcc和g++
+          - os: ubuntu-latest
+            c_compiler: gcc
+            cpp_compiler: g++
+          # 当os为ubuntu-latest时，使用clang和clang++
+          - os: ubuntu-latest
+            c_compiler: clang
+            cpp_compiler: clang++
+        # 排除不需要的组合
+        exclude:
+          # 排除Windows上的gcc
+          - os: windows-latest
+            c_compiler: gcc
+          # 排除Windows上的clang
+          - os: windows-latest
+            c_compiler: clang
+          # 排除Ubuntu上的cl（MSVC编译器）
+          - os: ubuntu-latest
+            c_compiler: cl
+    
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4 # 使用actions/checkout动作检出代码库
+
+      # 设置可重用的字符串（如构建输出目录）
+      - name: Set reusable strings
+        # 步骤ID，用于后续引用
+        id: strings
+        # 使用bash shell
+        shell: bash
+        # 运行命令：将构建输出路径设置为环境变量
+        run: |
+          echo "build-output-dir=${{ github.workspace }}/build" >> "$GITHUB_OUTPUT"
+
+      - name: Configure CMake
+        run: >
+          cmake -B ${{ steps.strings.outputs.build-output-dir }} 
+          -DCMAKE_CXX_COMPILER=${{ matrix.cpp_compiler }}
+          -DCMAKE_C_COMPILER=${{ matrix.c_compiler }}
+          -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
+          -S ${{ github.workspace }}
+
+      - name: Build
+        run: |
+          cmake --build ${{ steps.strings.outputs.build-output-dir }} --config ${{ matrix.build_type }} --parallel
+
+      - name: Tests
+        # 设置工作目录为构建输出目录
+        working-directory: ${{ steps.strings.outputs.build-output-dir }}
+        # 运行ctest测试，--build-config用于多配置生成器（如Visual Studio）
+        run: ctest --build-config ${{ matrix.build_type }} --output-on-failure
+
+      - name: Set version
+        id: setver
+        run: |
+          # 使用语义化版本+日期+构建号
+          DATE=$(date +'%Y%m%d')
+          echo "version=1.0.0-$DATE.${{ github.run_number }}" >> $GITHUB_OUTPUT
+          echo "short_os=$(echo $RUNNER_OS | tr '[:upper:]' '[:lower:]')" >> $GITHUB_OUTPUT
+          echo "arch=x86_64" >> $GITHUB_OUTPUT
+          
+          # 检测工具链
+          if [ "$RUNNER_OS" == "Linux" ]; then
+            echo "toolchain=gcc" >> $GITHUB_OUTPUT
+          elif [ "$RUNNER_OS" == "Windows" ]; then
+            echo "toolchain=mingw" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Prepare release files
+        run: |
+          # 创建组件目录
+          mkdir -p ${{github.workspace}}/release/client
+          mkdir -p ${{github.workspace}}/release/server
+          
+          # 复制可执行文件到对应组件
+          cp ${{ steps.strings.outputs.build-output-dir }}/client_desktop/hello ${{github.workspace}}/release/client/bin/
+          cp ${{ steps.strings.outputs.build-output-dir }}/service/hellod ${{github.workspace}}/release/server/bin/
+          cp ${{ steps.strings.outputs.build-output-dir }}/control/helloctl ${{github.workspace}}/release/server/bin/
+          
+          # 复制资源文件
+          # cp -r assets ${{github.workspace}}/release/client/
+          # cp -r assets ${{github.workspace}}/release/server/
+
+      - name: Create release archives
+        run: |
+          cd ${{github.workspace}}/release
+          
+          # 客户端打包
+          if [ "$RUNNER_OS" == "Linux" ]; then
+            tar -Jcvf hello-client-v${{ steps.setver.outputs.version }}-${{ steps.setver.outputs.short_os }}-${{ steps.setver.outputs.arch }}-${{ steps.setver.outputs.toolchain }}.tar.xz -C client .
+          elif [ "$RUNNER_OS" == "Windows" ]; then
+            7z a hello-client-v${{ steps.setver.outputs.version }}-${{ steps.setver.outputs.short_os }}-${{ steps.setver.outputs.arch }}-${{ steps.setver.outputs.toolchain }}.7z client/*
+          fi
+          
+          # 服务端打包
+          if [ "$RUNNER_OS" == "Linux" ]; then
+            tar -Jcvf hello-server-v${{ steps.setver.outputs.version }}-${{ steps.setver.outputs.short_os }}-${{ steps.setver.outputs.arch }}-${{ steps.setver.outputs.toolchain }}.tar.xz -C server .
+          elif [ "$RUNNER_OS" == "Windows" ]; then
+            7z a hello-server-v${{ steps.setver.outputs.version }}-${{ steps.setver.outputs.short_os }}-${{ steps.setver.outputs.arch }}-${{ steps.setver.outputs.toolchain }}.7z server/*
+          fi
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-packages-${{ steps.setver.outputs.version }}
+          path: ${{github.workspace}}/release/*.tar.xz
+          # 注意：Windows上7z包需要单独处理路径
