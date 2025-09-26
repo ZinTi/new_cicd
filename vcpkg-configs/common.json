@@ -18,10 +18,6 @@
       "features": ["protobuf", "static"]
     },
     {
-      "name": "protobuf",
-      "features": ["static"]
-    },
-    {
         "name": "openssl",
         "version>=": "3.5.0",
         "features": ["static"]

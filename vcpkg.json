@@ -10,12 +10,7 @@
     },
     {
       "name": "grpc",
-      "version>=": "1.71.0",
       "features": ["protobuf", "static"]
-    },
-    {
-      "name": "protobuf",
-      "features": ["static"]
     }
   ]
 }
