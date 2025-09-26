@@ -12,11 +12,7 @@
     }
   ],
   "dependencies": [
-    {
-      "name": "grpc",
-      "version": "1.71.0",
-      "features": ["static"]
-    },
+    "grpc",
     {
         "name": "openssl",
         "version>=": "3.5.0",

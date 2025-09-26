@@ -85,6 +85,16 @@ jobs:
           echo "vcpkg-triplet=${{ matrix.triplet }}" >> "$GITHUB_OUTPUT"
           echo "cmake-generator=${{ matrix.generator }}" >> "$GITHUB_OUTPUT"
 
+          # 动态获取 vcpkg 安装路径和构建工具链文件完整路径
+          which vcpkg && vcpkg --version || echo "vcpkg not found"
+          echo "vcpkg_root=$(dirname $(which vcpkg))" >> "$GITHUB_OUTPUT"
+          echo "vcpkg_toolchain=$vcpkg_root/../scripts/buildsystems/vcpkg.cmake" >> "$GITHUB_OUTPUT"
+          # 检查工具链文件是否存在
+          if [ ! -f "$vcpkg_toolchain" ]; then
+            echo "error: vcpkg toolchain file not found: $vcpkg_toolchain"
+            exit 1
+          fi
+
 #       - name: Print compilers
 #         shell: bash
 #         run: |
@@ -102,6 +112,7 @@ jobs:
 
       # 配置 vcpkg 覆盖
       - name: Configure vcpkg overlays
+        shell: bash
         run: |
           mkdir vcpkg-overlays
           cp vcpkg-configs/common.json vcpkg-overlays/
@@ -112,8 +123,8 @@ jobs:
           
       # 安装全局依赖
       - name: Install common dependencies
+        shell: bash
         run: |
-          vcpkg --version || echo "vcpkg not found"
           vcpkg install --triplet ${{ steps.strings.outputs.vcpkg-triplet }} --overlay-ports=./vcpkg-overlays
 
 
@@ -127,7 +138,7 @@ jobs:
             -DCMAKE_CXX_COMPILER=${{ matrix.cpp_compiler }} \
             -DCMAKE_C_COMPILER=${{ matrix.c_compiler }} \
             -S ${{ steps.strings.outputs.workspace-dir }} \
-            -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake \
+            -DCMAKE_TOOLCHAIN_FILE=$vcpkg_toolchain \
             -DVCPKG_TARGET_TRIPLET=${{ steps.strings.outputs.vcpkg-triplet }}
 
           else
@@ -137,7 +148,7 @@ jobs:
             -DCMAKE_C_COMPILER=${{ matrix.c_compiler }} \
             -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
             -S ${{ steps.strings.outputs.workspace-dir }} \
-            -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake \
+            -DCMAKE_TOOLCHAIN_FILE=$vcpkg_toolchain \
             -DVCPKG_TARGET_TRIPLET=${{ steps.strings.outputs.vcpkg-triplet }}
           fi
 
